@@ -1,6 +1,46 @@
 const std = @import("std");
 const hashtable = @import("hashtable.zig");
 
+inline fn parseNumber(c: u8) u8 {
+    switch (c) {
+        '0' => return 0,
+        '1' => return 1,
+        '2' => return 2,
+        '3' => return 3,
+        '4' => return 4,
+        '5' => return 5,
+        '6' => return 6,
+        '7' => return 7,
+        '8' => return 8,
+        '9' => return 9,
+        else => unreachable,
+    }
+}
+
+inline fn parseFloat(str: []u8) f32 {
+    // std.debug.assert(str[str.len - 2] == ',');
+
+    const decimalPart = parseNumber(str[str.len - 1]);
+    var res: f32 = 0;
+
+    for (1..str.len - 2) |i| {
+        const idx = str.len - 3 - i;
+        const number = parseNumber(str[idx]);
+        res += @as(f32, @floatFromInt(std.math.pow(usize, 10, i) * number));
+    }
+
+    res += @as(f32, @floatFromInt(decimalPart)) / 10;
+
+    if (str[0] == '-') {
+        res *= -1;
+    } else {
+        const number = parseNumber(str[0]);
+        res += @as(f32, @floatFromInt(std.math.pow(usize, 10, str.len - 2) * number));
+    }
+
+    return res;
+}
+
 inline fn splitOnce(input: []u8, comptime del: u8) ?usize {
     if (input.len < 4) {
         for (0..input.len) |i| {
@@ -39,7 +79,7 @@ inline fn splitOnce(input: []u8, comptime del: u8) ?usize {
 
 inline fn updateMap(map: *hashtable.HashTable, line: []u8) !void {
     const split = splitOnce(line, ';').?;
-    const val = try std.fmt.parseFloat(f32, line[split + 1 ..]);
+    const val = parseFloat(line[split + 1 ..]);
 
     const v = map.get(line[0..split]);
     if (v == null) {
