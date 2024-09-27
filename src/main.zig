@@ -1,12 +1,11 @@
 const std = @import("std");
+const hashtable = @import("hashtable.zig");
 
-const SplitOnce = struct { first: []u8, second: []u8 };
-
-fn splitOnce(input: []u8, comptime del: u8) ?SplitOnce {
+inline fn splitOnce(input: []u8, comptime del: u8) ?usize {
     if (input.len < 4) {
         for (0..input.len) |i| {
             if (input[i] == del) {
-                return .{ .first = input[0..i], .second = input[i + 1 ..] };
+                return i;
             }
         }
     } else {
@@ -20,7 +19,7 @@ fn splitOnce(input: []u8, comptime del: u8) ?SplitOnce {
 
             if (idx != null) {
                 const i = idx.? + start;
-                return .{ .first = input[0..i], .second = input[i + 1 ..] };
+                return i;
             }
 
             start -= 4;
@@ -29,7 +28,7 @@ fn splitOnce(input: []u8, comptime del: u8) ?SplitOnce {
         if (start > 0) {
             for (0..start) |i| {
                 if (input[i] == del) {
-                    return .{ .first = input[0..i], .second = input[i + 1 ..] };
+                    return i;
                 }
             }
         }
@@ -38,23 +37,29 @@ fn splitOnce(input: []u8, comptime del: u8) ?SplitOnce {
     return null;
 }
 
-fn updateMap(map: *std.StringHashMap(f32), line: []u8) !void {
+inline fn updateMap(map: *hashtable.HashTable, line: []u8) !void {
     const split = splitOnce(line, ';').?;
-    const val = try std.fmt.parseFloat(f32, split.second);
+    const val = try std.fmt.parseFloat(f32, line[split + 1 ..]);
 
-    const v = map.getPtr(split.first);
+    const v = map.get(line[0..split]);
     if (v == null) {
-        try map.put(split.first, val);
+        const entry = hashtable.Record{
+            .sum = val,
+            .cnt = 1,
+        };
+
+        try map.insert(line[0..split], entry);
     } else {
-        v.?.* += val;
+        v.?.*.sum += val;
+        v.?.*.cnt += 1;
     }
 }
 
-fn makeMap(ptr: []u8) !void {
+inline fn makeMap(ptr: []u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var map = std.StringHashMap(f32).init(allocator);
+    var map = try hashtable.HashTable.init(allocator);
     defer map.deinit();
 
     const lookahead = comptime 16;
@@ -75,31 +80,31 @@ fn makeMap(ptr: []u8) !void {
             0 => {},
             1 => {
                 const idx = std.simd.firstTrue(matches).? + offset;
-                try updateMap(&map, ptr[lastIdx + 1 .. idx]);
-                lastIdx = idx;
+                try updateMap(map, ptr[lastIdx..idx]);
+                lastIdx = idx + 1;
             },
             2 => {
                 const firstIdx = std.simd.firstTrue(matches).? + offset;
                 const secondIdx = std.simd.lastTrue(matches).? + offset;
-                try updateMap(&map, ptr[lastIdx + 1 .. firstIdx]);
-                try updateMap(&map, ptr[firstIdx + 1 .. secondIdx]);
-                lastIdx = secondIdx;
+                try updateMap(map, ptr[lastIdx..firstIdx]);
+                try updateMap(map, ptr[firstIdx + 1 .. secondIdx]);
+                lastIdx = secondIdx + 1;
             },
             else => {
                 const firstIdx = std.simd.firstTrue(matches).?;
                 const secondIdx = std.simd.lastTrue(matches).?;
-                try updateMap(&map, ptr[lastIdx + 1 .. firstIdx + offset]);
+                try updateMap(map, ptr[lastIdx .. firstIdx + offset]);
 
                 var prev: usize = firstIdx + offset;
                 for (firstIdx + 1..secondIdx) |i| {
                     if (matches[i]) {
-                        try updateMap(&map, ptr[prev + 1 .. i + offset]);
+                        try updateMap(map, ptr[prev + 1 .. i + offset]);
                         prev = i + offset;
                     }
                 }
 
-                try updateMap(&map, ptr[prev + 1 .. secondIdx + offset]);
-                lastIdx = secondIdx + offset;
+                try updateMap(map, ptr[prev + 1 .. secondIdx + offset]);
+                lastIdx = secondIdx + offset + 1;
             },
         }
 
@@ -108,13 +113,13 @@ fn makeMap(ptr: []u8) !void {
 
     for (offset..ptr.len) |i| {
         if (ptr[i] == '\n') {
-            try updateMap(&map, ptr[lastIdx + 1 .. i]);
-            lastIdx = i;
+            try updateMap(map, ptr[lastIdx..i]);
+            lastIdx = i + 1;
         }
     }
 }
 
-fn parallelMMap(allocator: std.mem.Allocator, ptr: []u8) !void {
+inline fn parallelMMap(allocator: std.mem.Allocator, ptr: []u8) !void {
     const j = comptime 12;
     const tSize: usize = ptr.len / j;
     var prev: usize = 0;
